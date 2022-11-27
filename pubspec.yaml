@@ -19,6 +19,7 @@ dependencies:
   fft: ^0.3.0
   fl_chart: ^0.55.2
   fftea: ^1.2.0+1
+  scidart: ^0.0.2-dev.12
 
 dev_dependencies:
   flutter_test:

@@ -3,13 +3,14 @@ import 'dart:async';
 import 'dart:io';
 
 import 'dart:math';
-import 'package:fftea/fftea.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:scidart/numdart.dart';
+import 'package:scidart/scidart.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -93,8 +94,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       int initialPowerOfTwo = (log(data.length) * log2e).ceil();
       int samplesFinalLength = pow(2, initialPowerOfTwo).toInt();
       final padding = List<double>.filled(samplesFinalLength - data.length, 0);
-      final fftSamples =
-          FFT(data.length + padding.length).realFft([...data, ...padding]);
+      final complexArray = arrayToComplexArray(Array(data));
+      final fftSamples = fft(complexArray);
       final deltaTime = 1E6 / (sampleRate * fftSamples.length);
       final timeSpots = List<FlSpot>.generate(data.length, (n) {
         final y = data[n];
@@ -105,7 +106,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final frequencySpots = List<FlSpot>.generate(
         1 + fftSamples.length ~/ 2,
         (n) {
-          double y = fftSamples[n].y.abs();
+          double y = fftSamples[n].imaginary.abs();
           maxFFTValue = max(maxFFTValue, y);
           return FlSpot(n * deltaFrequency, y);
         },
@@ -147,7 +148,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         backgroundColor: Colors.transparent,
       ),
       body: StreamBuilder<List<FlSpot>>(
-        stream: _fftSpots.stream,
+        stream: _spots.stream,
         builder: (context, snapshot) {
           if (snapshot.data == null) {
             return Container(
@@ -165,8 +166,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   dotData: FlDotData(show: false),
                 )
               ],
-              maxX: _maxFFTValue,
-              minY: 0,
             ),
           );
         },
