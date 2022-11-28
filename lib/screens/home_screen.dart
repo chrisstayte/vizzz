@@ -1,16 +1,12 @@
 import 'dart:async';
-
-import 'dart:io';
-
 import 'dart:math';
+import 'package:fftea/fftea.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_sound/flutter_sound.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:scidart/numdart.dart';
-import 'package:scidart/scidart.dart';
+import 'package:vizzz/screens/info_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,17 +17,17 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+  StreamSubscription<Food>? _recordingSubscription;
   final _spots = StreamController<List<FlSpot>>.broadcast();
   final _fftSpots = StreamController<List<FlSpot>>.broadcast();
-  StreamSubscription? _recordingSubscription;
-  String? _tempPath;
   final int _samplesPerSecond = 44100;
-  final int _bytesPerSamples = 2;
   double _maxTimeValue = 1;
   double _maxFFTValue = 1;
+
   @override
   void initState() {
     WidgetsBinding.instance.addObserver(this);
+
     startRecorder();
     super.initState();
   }
@@ -45,30 +41,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    super.didChangeAppLifecycleState(state);
-  }
-
-  Future<IOSink> createFile() async {
-    var tempDir = await getTemporaryDirectory();
-    _tempPath = '${tempDir.path}/flutter_sound_example.pcm';
-    var outputFile = File(_tempPath!);
-    if (outputFile.existsSync()) {
-      await outputFile.delete();
+    switch (state) {
+      case AppLifecycleState.paused:
+        stopRecorder();
+        break;
+      case AppLifecycleState.resumed:
+        startRecorder();
+        break;
     }
-    return outputFile.openWrite();
+
+    super.didChangeAppLifecycleState(state);
   }
 
   Future<void> startRecorder() async {
     var status = await Permission.microphone.request();
     if (status.isGranted) {
       _recorder.openRecorder().then((value) async {
-        //var sink = await createFile();
         var recordingDataController = StreamController<Food>();
         _recordingSubscription =
             recordingDataController.stream.listen((buffer) {
           if (buffer is FoodData) {
-            //sink.add(buffer.data!);
-            var printMe = buffer.data!.buffer.asInt16List();
             _processAudio(buffer.data!);
           }
         });
@@ -83,19 +75,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   bool _mutex = false;
+  static FFT? _fft;
   void _processAudio(Uint8List f) async {
     if (_mutex) return;
     _mutex = true;
     final computedData = await compute<List, List>((List f) {
-      final data = _calculateWaveSamples(f[0] as Uint8List);
+      final data = _calculateWaveSamples(f[0]);
       double maxTimeValue = f[1];
       double maxFFTValue = f[2];
       final sampleRate = (f[3] as int).toDouble();
       int initialPowerOfTwo = (log(data.length) * log2e).ceil();
       int samplesFinalLength = pow(2, initialPowerOfTwo).toInt();
-      final padding = List<double>.filled(samplesFinalLength - data.length, 0);
-      final complexArray = arrayToComplexArray(Array(data));
-      final fftSamples = fft(complexArray);
+      _fft ??= FFT(data.length);
+      final fftSamples = _fft!.realFft(data).magnitudes();
       final deltaTime = 1E6 / (sampleRate * fftSamples.length);
       final timeSpots = List<FlSpot>.generate(data.length, (n) {
         final y = data[n];
@@ -106,7 +98,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final frequencySpots = List<FlSpot>.generate(
         1 + fftSamples.length ~/ 2,
         (n) {
-          double y = fftSamples[n].imaginary.abs();
+          double y = fftSamples[n].abs();
           maxFFTValue = max(maxFFTValue, y);
           return FlSpot(n * deltaFrequency, y);
         },
@@ -115,6 +107,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }, [f, _maxTimeValue, _maxFFTValue, _samplesPerSecond]);
     _mutex = false;
     _maxTimeValue = computedData[0];
+
     _spots.add(computedData[1]);
     _maxFFTValue = computedData[2];
     _fftSpots.add(computedData[3]);
@@ -132,10 +125,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return x;
   }
 
+  Future<void> pauseRecorder() async {
+    if (_recorder.isRecording) {
+      await _recorder.pauseRecorder();
+    }
+  }
+
   Future<void> stopRecorder() async {
     await _recorder.stopRecorder();
     if (_recordingSubscription != null) {
-      await _recordingSubscription!.cancel();
+      _recordingSubscription!.cancel();
       _recordingSubscription = null;
     }
   }
@@ -144,31 +143,96 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        elevation: 0,
-        backgroundColor: Colors.transparent,
+        title: const Text('Vizzz'),
+        actions: [
+          IconButton(
+              onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      fullscreenDialog: true,
+                      builder: (context) => InfoScreen(),
+                    ),
+                  ),
+              icon: Icon(Icons.info))
+        ],
       ),
-      body: StreamBuilder<List<FlSpot>>(
-        stream: _spots.stream,
-        builder: (context, snapshot) {
-          if (snapshot.data == null) {
-            return Container(
-              child: Center(
-                child: Text('No Data'),
-              ),
-            );
-          }
+      body: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Expanded(
+            child: StreamBuilder<List<FlSpot>>(
+              stream: _spots.stream,
+              builder: (context, snapshot) {
+                if (snapshot.data == null) {
+                  return const Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Text(
+                      'Seems to be an issue!',
+                      style: TextStyle(fontSize: 16),
+                    ),
+                  );
+                }
 
-          return LineChart(
-            LineChartData(
-              lineBarsData: [
-                LineChartBarData(
-                  spots: snapshot.data!,
-                  dotData: FlDotData(show: false),
-                )
-              ],
+                return AbsorbPointer(
+                  child: LineChart(
+                    LineChartData(
+                      lineBarsData: [
+                        LineChartBarData(
+                          color: const Color(0xff645DE0),
+                          isStrokeCapRound: true,
+                          isStrokeJoinRound: true,
+                          spots: snapshot.data!,
+                          dotData: FlDotData(show: false),
+                        )
+                      ],
+                      maxY: 12000,
+                      minY: -12000,
+                    ),
+                  ),
+                );
+              },
             ),
-          );
-        },
+          ),
+          Expanded(
+            child: StreamBuilder<List<FlSpot>>(
+              stream: _fftSpots.stream,
+              builder: (context, snapshot) {
+                if (snapshot.data == null) {
+                  return Column(
+                    children: [
+                      SizedBox(
+                        child: OutlinedButton(
+                          onPressed: () => openAppSettings(),
+                          child: const Text(
+                            'Enable Microphone Access',
+                            style: TextStyle(fontSize: 16),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                return AbsorbPointer(
+                  child: LineChart(
+                    LineChartData(
+                      lineBarsData: [
+                        LineChartBarData(
+                          color: const Color(0xff645DE0),
+                          isStrokeCapRound: true,
+                          isStrokeJoinRound: true,
+                          spots: snapshot.data!,
+                          dotData: FlDotData(show: false),
+                        )
+                      ],
+                      maxY: _maxFFTValue,
+                      minY: 0,
+                    ),
+                  ),
+                );
+              },
+            ),
+          )
+        ],
       ),
     );
   }
