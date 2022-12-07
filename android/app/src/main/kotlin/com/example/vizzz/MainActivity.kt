@@ -1,4 +1,4 @@
-package com.example.vizzz
+package com.chrisstayte.vizzz
 
 import io.flutter.embedding.android.FlutterActivity
 
